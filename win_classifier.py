@@ -13,8 +13,8 @@ import time
 
 config = {
     'auth_plugin': 'mysql_native_password',
-    'user': 'skerbey',
-    'password': 'password',
+    'user': '',
+    'password': '',
     'host': 'localhost',
     'ssl_ca': 'C:\certificates\ca.pem',
     'ssl_cert': 'C:\certificates\client-cert.pem',
@@ -243,6 +243,14 @@ def main(unused_argv):
 
     FLAGS.train_epochs = 3
     FLAGS.epochs_per_eval = 1
+
+    config_file = open("config_file.txt", 'r')
+    db_user = config_file.read()
+    db_pass = config_file.read()
+    config_file.close()
+
+    config['user'] = db_user.rstrip()
+    config['password'] = db_pass.rstrip()
 
     setup_database()
 
