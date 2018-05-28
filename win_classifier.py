@@ -7,6 +7,7 @@ import shutil
 import sys
 
 import tensorflow as tf
+import numpy as np
 
 import mysql.connector
 import time
@@ -29,7 +30,7 @@ parser.add_argument(
     help='Base directory for the model.')
 
 parser.add_argument(
-    '--train_epochs', type=int, default=40, help='Number of training epochs.')
+    '--train_epochs', type=int, default=32, help='Number of training epochs.')
 
 parser.add_argument(
     '--epochs_per_eval', type=int, default=4,
@@ -43,7 +44,8 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--predict', default=False, action='store_const', const=True,
+    '--predict', type=str, default='',
+    help='Input vector'
 )
 
 _NUM_EXAMPLES = {
@@ -159,16 +161,14 @@ def format_matches(matches):
         for d in m['dire']:
             d_indices.append(d['hero_id']-1 + num_heroes)
         depth = 2*num_heroes
+        r_indices = np.concatenate((r_indices, d_indices))
         r_tensor = tf.one_hot(r_indices, depth, dtype=tf.int32)
-        d_tensor = tf.one_hot(d_indices, depth, dtype=tf.int32)
-        sess = tf.InteractiveSession()
-        features.append(tf.convert_to_tensor(sum(r_tensor.eval())+sum(d_tensor.eval())))
-        labels.append(tf.convert_to_tensor(m['radiant_win']))
-        sess.close()
+        features.append(sum(r_tensor.eval()))
+        labels.append(m['radiant_win'])
         count = count + 1
         if count % 100 == 0:
             print("Formatted " + str(count) + " matches.")
-    features = {'x': features}
+    features = {'x': np.asarray(features)}
     return features, labels
 
 
@@ -182,14 +182,40 @@ def input_fn(num_epochs, shuffle, batch_size, train_test):
         return f, l
 
     print("Creating dataset from tensor slices")
+    sess = tf.InteractiveSession()
+    sess.as_default()
     dataset = tf.data.Dataset.from_tensor_slices(query_format_matches())
-
+    sess.close()
     if shuffle:
         dataset = dataset.shuffle(buffer_size=_NUM_EXAMPLES['train'])
 
     dataset = dataset.repeat(num_epochs)
     dataset = dataset.batch(batch_size)
 
+
+    return dataset
+
+
+def predict_fn(input_vector):
+
+    input_v = input_vector.split(',')
+
+    features = []
+    r_indices = input_v[:5]
+    d_indices = input_v[5:]
+    for i in range(5):
+        r_indices[i] = int(r_indices[i])-1
+        d_indices[i] = int(d_indices[i]) - 1 + num_heroes
+    depth = 2*num_heroes
+    indices = np.concatenate((r_indices, d_indices))
+    tensor = tf.one_hot(indices, depth, dtype=tf.int32)
+    sess = tf.InteractiveSession()
+    sess.as_default()
+    features.append(sum(tensor.eval()))
+    sess.close()
+    feature = {'x': np.asarray(features)}
+
+    dataset = tf.data.Dataset.from_tensors(feature)
 
     return dataset
 
@@ -241,12 +267,9 @@ def input_fn(num_epochs, shuffle, batch_size, train_test):
 
 def main(unused_argv):
 
-    FLAGS.train_epochs = 3
-    FLAGS.epochs_per_eval = 1
-
     config_file = open("config_file.txt", 'r')
-    db_user = config_file.read()
-    db_pass = config_file.read()
+    db_user = config_file.readline()
+    db_pass = config_file.readline()
     config_file.close()
 
     config['user'] = db_user.rstrip()
@@ -254,8 +277,7 @@ def main(unused_argv):
 
     setup_database()
 
-    # num_samples = get_sample_count()
-    num_samples = 250
+    num_samples = get_sample_count()
 
     global _NUM_EXAMPLES
     _NUM_EXAMPLES = {
@@ -289,7 +311,6 @@ def main(unused_argv):
 
             for key in sorted(results):
                 print('%s: %s' % (key, results[key]))
-
         millis2 = int(round(time.time() * 1000))
 
         print('-' * 60)
@@ -301,10 +322,14 @@ def main(unused_argv):
         model = build_estimator(FLAGS.model_dir)
 
     if FLAGS.predict:
-        # TODO create input argument to predict against and run it here
-        # predictions = model.predict(input_fn=lambda: input_fn(
-        #    1, False, FLAGS.batch_size))
-        return
+
+        prediction = model.predict(input_fn=lambda: predict_fn(FLAGS.predict))
+
+        print('-' * 60)
+        print('Prediction')
+        print('-' * 60)
+        for value in prediction:
+            print(str(value['logistic'])[1:-1])
 
 
 if __name__ == '__main__':
